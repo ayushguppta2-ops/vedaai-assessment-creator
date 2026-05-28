@@ -1,43 +1,28 @@
-import { Queue, Worker, QueueEvents } from 'bullmq';
+import { Queue } from 'bullmq';
 import { createClient } from 'redis';
-
-const redisConfig = {
-  host: process.env.REDIS_URL ? new URL(process.env.REDIS_URL).hostname : 'localhost',
-  port: process.env.REDIS_URL ? parseInt(new URL(process.env.REDIS_URL).port || '6379') : 6379,
-  password: process.env.REDIS_URL ? new URL(process.env.REDIS_URL).password || undefined : undefined,
-};
-
-// Redis client for caching
-export const redisClient = createClient({
-  url: process.env.REDIS_URL || 'redis://localhost:6379'
-});
-
-redisClient.on('error', (err) => {
-  console.log('Redis Client Error (non-fatal):', err.message);
-});
-
-export const connectRedis = async () => {
+function getRedisConnection() {
+  const url = process.env.REDIS_URL || '';
+  if (!url) return { host: 'localhost', port: 6379 };
   try {
-    await redisClient.connect();
-    console.log('✅ Redis connected');
-  } catch (err) {
-    console.log('⚠️  Redis not available, running without cache');
-  }
+    const p = new URL(url);
+    const cfg: any = { host: p.hostname, port: parseInt(p.port || '6379'), password: p.password ? decodeURIComponent(p.password) : undefined, username: p.username ? decodeURIComponent(p.username) : undefined };
+    if (p.protocol === 'rediss:') cfg.tls = { rejectUnauthorized: false };
+    return cfg;
+  } catch { return { host: 'localhost', port: 6379 }; }
+}
+export const redisConfig = getRedisConnection();
+export const redisClient = createClient({
+  url: process.env.REDIS_URL || 'redis://localhost:6379',
+  socket: process.env.REDIS_URL?.startsWith('rediss://') ? { tls: true, rejectUnauthorized: false } : undefined
+});
+redisClient.on('error', () => {});
+export const connectRedis = async () => {
+  try { await redisClient.connect(); console.log('✅ Redis connected'); }
+  catch { console.log('⚠️ Redis not available'); }
 };
-
-// BullMQ Assessment Queue
-export const assessmentQueue = new Queue('assessment-generation', {
-  connection: redisConfig,
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: { type: 'exponential', delay: 2000 },
-    removeOnComplete: 100,
-    removeOnFail: 100
-  }
-});
-
-export const assessmentQueueEvents = new QueueEvents('assessment-generation', {
-  connection: redisConfig
-});
-
-export { redisConfig };
+let queueInstance: Queue | null = null;
+export function getAssessmentQueue(): Queue | null {
+  if (queueInstance) return queueInstance;
+  try { queueInstance = new Queue('assessment-generation', { connection: redisConfig, defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 2000 }, removeOnComplete: 100, removeOnFail: 100 } }); return queueInstance; }
+  catch { return null; }
+}
