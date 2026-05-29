@@ -8,7 +8,7 @@ import { processAssignment } from '../workers/assessmentWorker';
 import { io } from '../server';
 const router = Router();
 const storage = multer.diskStorage({ destination: (req, file, cb) => { const d = path.join(__dirname, '../../uploads'); if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); cb(null, d); }, filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`) });
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: (req, file, cb) => { if (['application/pdf','text/plain'].includes(file.mimetype)) cb(null, true); else cb(new Error('Only PDF/TXT')); } });
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 async function runDirectly(assignmentId: string) {
   try { await processAssignment(assignmentId); }
   catch (err: any) { await Assignment.findByIdAndUpdate(assignmentId, { status: 'failed', error: err.message }); if (io) io.to(assignmentId).emit('job:failed', { assignmentId, status: 'failed', message: err.message, progress: 0 }); }
@@ -23,7 +23,7 @@ router.post('/', upload.single('file'), async (req: Request, res: Response): Pro
     const { title, subject, dueDate, questionTypes, numberOfQuestions, totalMarks, additionalInstructions, difficulty } = req.body;
     if (!title || !subject || !dueDate || !numberOfQuestions || !totalMarks) return res.status(400).json({ success: false, error: 'Missing required fields' });
     if (Number(numberOfQuestions) <= 0 || Number(totalMarks) <= 0) return res.status(400).json({ success: false, error: 'Values must be positive' });
-    const parsedTypes = typeof questionTypes === 'string' ? JSON.parse(questionTypes) : questionTypes || ['short_answer'];
+    const parsedTypes = typeof questionTypes === 'string' ? JSON.parse(questionTypes) : (questionTypes || ['short_answer']);
     let fileText: string | undefined, fileUrl: string | undefined;
     if (req.file) { fileUrl = `/uploads/${req.file.filename}`; if (req.file.mimetype === 'text/plain') fileText = String(fs.readFileSync(req.file.path)); }
     const assignment = await Assignment.create({ title, subject, dueDate: new Date(dueDate), questionTypes: parsedTypes, numberOfQuestions: Number(numberOfQuestions), totalMarks: Number(totalMarks), additionalInstructions, difficulty: difficulty || 'mixed', fileUrl, fileText, status: 'pending' });
